@@ -1,4 +1,33 @@
 services:
+  nginx:
+    image: nginx:1.28.0-alpine
+    container_name: nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: unless-stopped
+    networks:
+      - general-network
+
+  oauth2:
+    image: bitnami/oauth2-proxy:latest
+    container_name: oauth2
+    environment:
+      OAUTH2_PROXY_PROVIDER: oidc
+      OAUTH2_PROXY_OIDC_ISSUER_URL: "http://keycloak:8080/realms/devops-mission"
+      OAUTH2_PROXY_CLIENT_ID: "nocodb"
+      OAUTH2_PROXY_CLIENT_SECRET: "meI8zNQlO1UuejjmINpJrFtrmLmL6LMR"
+      OAUTH2_PROXY_COOKIE_SECRET: "5a2d08fe7466d3c9eff5d0bd85c70a7d"
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_UPSTREAMS: "http://nocodb:8080"
+      OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks:
+      - general-network
+
   postgres:
     image: postgres:15.13
     container_name: postgres
@@ -29,19 +58,41 @@ services:
       KC_HOSTNAME_STRICT: false
       KC_HOSTNAME_STRICT_HTTPS: false
       KC_HTTP_ENABLED: true
+      KC_PROXY: edge  # Для работы за Nginx
     command:
       - start-dev
     ports:
-      - "80:8080"
+      - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://keycloak:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks:
+      - general-network
+  
+  nocodb:
+    image: nocodb/nocodb:latest
+    container_name: nocodb
+    environment:
+      NC_DB: "pg://postgres:5432?u=${PG_USER_TAG:-postgres}&p=${PG_PASSWORD_TAG:-password}&d=${PG_DB_TAG:-root_db}"
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./nocodb_data:/usr/app/data
     networks:
       - general-network
 
 volumes:
   postgres_data:
     name: postgres_data
+  nocodb_data:
+    name: nocodb_data  
   
 networks:
   general-network:
