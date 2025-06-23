@@ -1,10 +1,17 @@
+# docker-compose.yml - The Final Version
+version: "3.8"
+
 services:
   nginx:
     image: nginx:1.28.0-alpine
     container_name: nginx
     ports:
       - "80:80"
-      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - oauth2
+      - keycloak
     restart: unless-stopped
     networks:
       - general-network
@@ -12,19 +19,61 @@ services:
   oauth2:
     image: bitnami/oauth2-proxy:latest
     container_name: oauth2
+    entrypoint:
+      - /bin/sh
+      - -c 
+      - |
+        echo 'Waiting for Keycloak to start...'
+        sleep 40;
+        echo 'Starting oauth2-proxy...';
+        oauth2-proxy
     environment:
-      OAUTH2_PROXY_PROVIDER: oidc
       OAUTH2_PROXY_OIDC_ISSUER_URL: "http://keycloak:8080/realms/devops-mission"
+      OAUTH2_PROXY_REDIRECT_URL: "http://localhost/oauth2/callback"
+      OAUTH2_PROXY_UPSTREAMS: "http://nocodb:8080"
+      OAUTH2_PROXY_PROVIDER: "oidc"
       OAUTH2_PROXY_CLIENT_ID: "nocodb"
       OAUTH2_PROXY_CLIENT_SECRET: "meI8zNQlO1UuejjmINpJrFtrmLmL6LMR"
       OAUTH2_PROXY_COOKIE_SECRET: "5a2d08fe7466d3c9eff5d0bd85c70a7d"
       OAUTH2_PROXY_EMAIL_DOMAINS: "*"
-      OAUTH2_PROXY_UPSTREAMS: "http://nocodb:8080"
       OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
       OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+    networks:
+      - general-network
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: keycloak
+    environment:
+      KC_HOSTNAME: keycloak
+      KC_HOSTNAME_URL: http://localhost
+      KC_PROXY: "edge"
+      KC_HTTP_ENABLED: "true"
+      KC_DB: "postgres"
+      KC_DB_URL: "jdbc:postgresql://postgres:5432/${PG_DB_TAG}"
+      KC_DB_USERNAME: ${PG_USER_TAG}
+      KC_DB_PASSWORD: ${PG_PASSWORD_TAG}
+      KEYCLOAK_ADMIN: ${KC_ADMIN_TAG}
+      KEYCLOAK_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD_TAG}
+    command: start
     depends_on:
-      keycloak:
+      postgres:
         condition: service_healthy
+    networks:
+      - general-network
+
+  nocodb:
+    image: nocodb/nocodb:latest
+    container_name: nocodb
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NC_DB: "pg://postgres:5432?u=${PG_USER_TAG:-postgres}&p=${PG_PASSWORD_TAG:-password}&d=${PG_DB_TAG:-root_db}"
+      NC_DISABLE_AUDIT: true
+    restart: unless-stopped
+    volumes:
+      - ./nocodb_data:/usr/app/data
     networks:
       - general-network
 
@@ -40,65 +89,12 @@ services:
     healthcheck:
       test: ["CMD","pg_isready","-U","keycloak"]
       interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - general-network
-
-  keycloak:
-    image: quay.io/keycloak/keycloak:latest
-    container_name: keycloak
-    environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/${PG_DB_TAG}
-      KC_DB_USERNAME: ${PG_USER_TAG}
-      KC_DB_PASSWORD: ${PG_PASSWORD_TAG}
-      KEYCLOAK_ADMIN: ${KC_ADMIN_TAG}
-      KEYCLOAK_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD_TAG}
-      KC_HOSTNAME_STRICT: false
-      KC_HOSTNAME_STRICT_HTTPS: false
-      KC_HTTP_ENABLED: true
-      KC_PROXY: edge  # Для работы за Nginx
-    command:
-      - start-dev
-    ports:
-      - "8080:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://keycloak:8080/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-    networks:
-      - general-network
-  
-  nocodb:
-    image: nocodb/nocodb:latest
-    container_name: nocodb
-    environment:
-      NC_DB: "pg://postgres:5432?u=${PG_USER_TAG:-postgres}&p=${PG_PASSWORD_TAG:-password}&d=${PG_DB_TAG:-root_db}"
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./nocodb_data:/usr/app/data
     networks:
       - general-network
 
 volumes:
   postgres_data:
-    name: postgres_data
   nocodb_data:
-    name: nocodb_data  
-  
+
 networks:
   general-network:
-    name: general-network  
-
-
-
-
-
